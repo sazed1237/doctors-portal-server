@@ -1,7 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, Admin } = require('mongodb');
+const jwt = require('jsonwebtoken');
 const app = express()
 const port = process.env.PORT || 5000;
 
@@ -24,6 +25,33 @@ const client = new MongoClient(uri, {
     }
 });
 
+
+// jwt verifying 
+const verifyJWT = (req, res, next) => {
+    // console.log('tumi keda')
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader) {
+        return res.status(401).send({ message: 'UnAuthorized access' })
+    }
+
+    const token = authHeader.split(' ')[1]
+    // console.log('token form jwt verify', token)
+
+    jwt.verify(token, process.env.ACCESS_TOKEN_SECRET,
+        function (err, decoded) {
+            if (err) {
+                return res.status(403).send({ message: 'forbidden access' })
+            }
+            console.log(decoded)
+            req.decoded = decoded
+            next()
+        });
+}
+
+
+
+
 async function run() {
     try {
         // Connect the client to the server	(optional starting in v4.7)
@@ -35,17 +63,53 @@ async function run() {
 
 
         // User route
-        app.put('/users/:email', async(req, res) => {
+        app.get('/users', verifyJWT, async (req, res) => {
+            const users = await usersCollections.find().toArray()
+            res.send(users)
+        })
+
+        app.get('/admin/:email', async(req, res)=> {
+            const email = req.params.email;
+            const user = await usersCollections.findOne({email: email});
+            const isAdmin = user.role === 'admin';
+            res.send({admin: isAdmin})
+        })
+
+
+        app.put('/users/admin/:email', verifyJWT, async (req, res) => {
+            const email = req.params.email;
+            const requester = req.decoded.email;
+            const requesterAccount = await usersCollections.findOne({ email: requester });
+            
+            if (requesterAccount.role === 'admin') {
+                const filter = { email: email }
+                const updatedUser = {
+                    $set: { role: 'admin' }
+                }
+                const result = await usersCollections.updateOne(filter, updatedUser)
+                return res.send(result)
+            }
+            else{
+                return res.status(403).send({message: 'forbidden access'})
+            }
+        })
+
+
+        app.put('/users/:email', async (req, res) => {
             const email = req.params.email;
             const user = req.body;
-            const filter = {email: email}
-            const options = {upsert: true}
+            // console.log(user)
+            const filter = { email: email }
+            const options = { upsert: true }
             const updatedUser = {
                 $set: user
             }
             const result = await usersCollections.updateOne(filter, updatedUser, options)
-            res.send(result)
-
+            const token = jwt.sign({ email: email },
+                process.env.ACCESS_TOKEN_SECRET,
+                { expiresIn: '1h' }
+            )
+            res.send({ result, token })
         })
 
 
@@ -79,11 +143,15 @@ async function run() {
 
 
         // booking Route 
-            // using email to filter
-        app.get('/bookings', async (req, res) => {
+        // using email to filter
+        app.get('/bookings', verifyJWT, async (req, res) => {
             const patientEmail = req.query.email;
-            // const patientDate = req.query.date;
-            const query = {email: patientEmail};
+            const decodedEmail = req.decoded.email;
+            if (decodedEmail !== patientEmail) {
+                return res.status(403).send({ message: 'forbidden access' })
+            }
+            // console.log(authorization)
+            const query = { email: patientEmail };
             const result = await bookingsCollections.find(query).toArray()
             res.send(result)
         })
