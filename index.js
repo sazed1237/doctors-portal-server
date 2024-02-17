@@ -5,6 +5,7 @@ const { MongoClient, ServerApiVersion, Admin, MongoAWSError, ObjectId } = requir
 const jwt = require('jsonwebtoken');
 const app = express()
 const port = process.env.PORT || 5000;
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
 
 // middleware
@@ -61,6 +62,7 @@ async function run() {
         const bookingsCollections = client.db("doctors_portal").collection("booking");
         const usersCollections = client.db("doctors_portal").collection("users");
         const doctorsCollections = client.db("doctors_portal").collection("doctors");
+        const paymentCollections = client.db("doctors_portal").collection("payments");
 
 
         // middleware check admin role
@@ -166,6 +168,14 @@ async function run() {
             res.send(result)
         })
 
+        app.get('/bookings/:id', verifyJWT, async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) }
+            // console.log(query)
+            const result = await bookingsCollections.findOne(query)
+            res.send(result)
+        })
+
         app.post('/bookings', async (req, res) => {
             const booking = req.body;
             // console.log(booking)
@@ -178,6 +188,37 @@ async function run() {
             res.send({ success: true, result })
         })
 
+        // payment update
+        app.patch('/bookings/:id', verifyJWT, async(req, res) => {
+            const id = req.params.id;
+            const payment = req.body;
+            console.log(payment)
+            const filter = {_id: new ObjectId(id)}
+            const updated = {
+                $set: {
+                    paid: true,
+                    transactionId: payment.transactionId
+
+                }
+            }
+            const updatedBooking = await bookingsCollections.updateOne(filter, updated)
+            const result = await paymentCollections.insertOne(payment)
+            res.send(updatedBooking)
+        })
+
+        // Payment Route
+        app.post("/create-payment-intent", verifyJWT, async (req, res) => {
+            const service = req.body;
+            const price = service.price
+            const amount = price*100;
+            const paymentIntent = await stripe.paymentIntents.create({
+                amount: amount,
+                currency: 'usd',
+                payment_method_types:['card']
+            })
+            res.send({clientSecret: paymentIntent.client_secret})
+            })
+    
 
         // Doctors route  
         app.get('/doctors', verifyJWT, verifyAdmin, async (req, res) => {
@@ -198,9 +239,9 @@ async function run() {
         })
 
         // doctor delete
-        app.delete('/doctor/:id', async (req, res) => {
+        app.delete('/doctor/:id', verifyJWT, async (req, res) => {
             const id = req.params.id;
-            console.log(id)
+            // console.log(id)
             const filter = { _id: new ObjectId(id) }
             const result = await doctorsCollections.deleteOne(filter)
             res.send(result)
@@ -209,11 +250,15 @@ async function run() {
         // user delete
         app.delete('/user/:id', verifyJWT, verifyAdmin, async (req, res) => {
             const id = req.params.id;
-            console.log(id)
+            // console.log(id)
             const filter = { _id: new ObjectId(id) }
             const result = await usersCollections.deleteOne(filter)
             res.send(result)
         })
+
+        
+
+        
 
 
 
